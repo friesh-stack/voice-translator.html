@@ -1,0 +1,450 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+<meta charset="UTF-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+<title>Sprachübersetzer DE ↔ IT</title>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+
+  body {
+    min-height: 100vh;
+    background: radial-gradient(ellipse at 70% 10%, #e8d5b0 0%, #F5F0E8 60%, #d4c4a0 100%);
+    font-family: 'Palatino Linotype', 'Book Antiqua', Palatino, Georgia, serif;
+    display: flex; flex-direction: column; align-items: center;
+    padding: 32px 16px 60px;
+  }
+
+  h1 {
+    font-size: clamp(22px, 5vw, 32px);
+    font-weight: 700; color: #1A1208;
+    letter-spacing: 0.04em; text-transform: uppercase;
+    margin-bottom: 4px;
+  }
+  .subtitle {
+    font-size: 13px; color: #8B7355; font-style: italic;
+    letter-spacing: 0.08em; margin-bottom: 28px;
+  }
+
+  /* Direction buttons */
+  .dir-row {
+    display: flex; align-items: center; gap: 12px; margin-bottom: 40px;
+  }
+  .dir-btn {
+    display: flex; align-items: center; gap: 8px;
+    padding: 10px 18px; border-radius: 10px;
+    border: 2px solid #C8B89A;
+    background: rgba(255,255,255,0.3);
+    color: #8B7355; font-weight: 500; font-size: 14px;
+    cursor: pointer; font-family: inherit;
+    transition: all 0.2s; letter-spacing: 0.03em;
+  }
+  .dir-btn.active {
+    border-color: #C4622D;
+    background: rgba(196,98,45,0.12);
+    color: #C4622D; font-weight: 700;
+  }
+  .swap-btn {
+    background: transparent; border: none; cursor: pointer;
+    color: #8B7355; padding: 6px; border-radius: 50%;
+    font-size: 20px; transition: transform 0.3s;
+    display: flex; align-items: center;
+  }
+  .swap-btn:hover { transform: rotate(180deg); }
+
+  /* Mic button */
+  .mic-wrap {
+    position: relative; display: flex;
+    align-items: center; justify-content: center;
+    width: 140px; height: 140px; margin-bottom: 20px;
+  }
+  .pulse, .pulse2 {
+    position: absolute; border-radius: 50%;
+    background: rgba(196,98,45,0.25);
+    pointer-events: none; display: none;
+    animation: pulseA 1.4s ease-out infinite;
+  }
+  .pulse  { width: 120px; height: 120px; }
+  .pulse2 { width: 140px; height: 140px; animation-delay: 0.5s;
+            background: rgba(196,98,45,0.12); }
+  .listening .pulse,
+  .listening .pulse2 { display: block; }
+
+  .mic-btn {
+    position: relative; z-index: 1;
+    width: 90px; height: 90px; border-radius: 50%;
+    border: none; background: #1A1208;
+    display: flex; align-items: center; justify-content: center;
+    cursor: pointer; transition: all 0.25s;
+    box-shadow: 0 8px 32px rgba(0,0,0,0.35);
+    font-size: 36px;
+  }
+  .mic-btn:disabled { cursor: default; }
+  .listening  .mic-btn { background: #C4622D; transform: scale(1.06);
+    box-shadow: 0 0 0 4px rgba(196,98,45,0.4), 0 8px 32px rgba(196,98,45,0.5); }
+  .speaking   .mic-btn { background: #2D5016; }
+  .translating .mic-btn { background: #8B7355; }
+
+  .mic-icon { font-size: 36px; }
+
+  /* Status */
+  .status {
+    font-size: 14px; color: #8B7355; font-style: italic;
+    min-height: 22px; margin-bottom: 28px; text-align: center;
+  }
+  .status.listening  { color: #C4622D; animation: blink 1.2s ease-in-out infinite; }
+  .status.speaking   { color: #2D5016; }
+  .status.error      { color: #b44; font-style: normal; }
+
+  /* Panels */
+  .panels {
+    width: 100%; max-width: 560px;
+    display: flex; flex-direction: column; gap: 14px;
+  }
+  .panel {
+    background: rgba(255,255,255,0.45);
+    border: 1px solid #C8B89A; border-radius: 12px;
+    padding: 16px 18px;
+    box-shadow: 0 2px 12px rgba(80,50,10,0.08);
+    display: none;
+  }
+  .panel.visible { display: block; }
+  .panel.target-panel {
+    background: rgba(45,80,22,0.08);
+    border-color: rgba(45,80,22,0.2);
+  }
+  .panel-header {
+    display: flex; align-items: center; gap: 10px;
+    margin-bottom: 10px; color: #3D2E1A;
+    font-weight: 600; font-size: 13px;
+    letter-spacing: 0.05em; text-transform: uppercase;
+  }
+  .panel-text {
+    font-size: 16px; line-height: 1.65; color: #1A1208;
+  }
+  .target-panel .panel-text { color: #2D5016; font-weight: 500; }
+
+  .replay-btn {
+    margin-left: auto; background: transparent;
+    border: 1px solid #C8B89A; border-radius: 6px;
+    cursor: pointer; color: #2D5016; padding: 3px 10px;
+    font-size: 13px; font-family: inherit;
+    transition: background 0.2s;
+  }
+  .replay-btn:hover { background: rgba(45,80,22,0.1); }
+
+  .reset-btn {
+    margin-top: 24px; background: transparent;
+    border: 1px solid #C8B89A; border-radius: 8px;
+    padding: 9px 22px; color: #8B7355; cursor: pointer;
+    font-size: 14px; font-family: inherit; letter-spacing: 0.04em;
+    display: none; transition: background 0.2s;
+  }
+  .reset-btn:hover { background: rgba(0,0,0,0.05); }
+  .reset-btn.visible { display: block; }
+
+  /* Flag SVGs */
+  .flag { border-radius: 3px; box-shadow: 0 2px 6px rgba(0,0,0,0.3); }
+
+  /* Spinner */
+  .spinner {
+    width: 36px; height: 36px;
+    border: 3px solid rgba(245,240,232,0.3);
+    border-top-color: #F5F0E8;
+    border-radius: 50%;
+    animation: spin 0.8s linear infinite;
+  }
+
+  @keyframes pulseA {
+    0%   { transform: scale(0.8); opacity: 1; }
+    100% { transform: scale(1.5); opacity: 0; }
+  }
+  @keyframes spin {
+    from { transform: rotate(0deg); }
+    to   { transform: rotate(360deg); }
+  }
+  @keyframes blink {
+    0%,100% { opacity: 1; }
+    50%     { opacity: 0.4; }
+  }
+</style>
+</head>
+<body>
+
+<h1>Sprachübersetzer</h1>
+<p class="subtitle">Deutsch · Italiano</p>
+
+<!-- Direction -->
+<div class="dir-row">
+  <button class="dir-btn active" id="btn-de-it" onclick="setDir('de-it')">
+    <svg class="flag" width="28" height="18" viewBox="0 0 28 18">
+      <rect width="28" height="6"  y="0"  fill="#000"/>
+      <rect width="28" height="6"  y="6"  fill="#DD0000"/>
+      <rect width="28" height="6"  y="12" fill="#FFCE00"/>
+    </svg>
+    DE → IT
+  </button>
+
+  <button class="swap-btn" onclick="swapDir()" title="Tauschen">⇅</button>
+
+  <button class="dir-btn" id="btn-it-de" onclick="setDir('it-de')">
+    <svg class="flag" width="28" height="18" viewBox="0 0 28 18">
+      <rect width="9.3" height="18" x="0"    fill="#009246"/>
+      <rect width="9.3" height="18" x="9.3"  fill="#fff"/>
+      <rect width="9.3" height="18" x="18.7" fill="#CE2B37"/>
+    </svg>
+    IT → DE
+  </button>
+</div>
+
+<!-- Mic -->
+<div class="mic-wrap" id="mic-wrap">
+  <div class="pulse"></div>
+  <div class="pulse2"></div>
+  <button class="mic-btn" id="mic-btn" onclick="handleMicClick()">
+    <span id="mic-icon">🎙️</span>
+    <div id="mic-spinner" class="spinner" style="display:none"></div>
+  </button>
+</div>
+
+<div class="status" id="status">Tippen zum Sprechen</div>
+
+<!-- Panels -->
+<div class="panels">
+  <div class="panel" id="panel-src">
+    <div class="panel-header" id="src-header">
+      <!-- filled by JS -->
+    </div>
+    <p class="panel-text" id="src-text"></p>
+  </div>
+  <div class="panel target-panel" id="panel-tgt">
+    <div class="panel-header" id="tgt-header">
+      <!-- filled by JS -->
+    </div>
+    <p class="panel-text" id="tgt-text"></p>
+  </div>
+</div>
+
+<button class="reset-btn" id="reset-btn" onclick="resetAll()">↺ Neu starten</button>
+
+<script>
+// ── Config ────────────────────────────────────────────────────────────────────
+const CLAUDE_API_KEY = localStorage.getItem('bl_api_key') || '';
+
+// Prompt user for API key if missing
+(function checkKey() {
+  if (!CLAUDE_API_KEY) {
+    const key = prompt('Anthropic API Key eingeben:');
+    if (key) localStorage.setItem('bl_api_key', key.trim());
+    else { document.body.innerHTML = '<p style="padding:2rem;color:red">API Key fehlt. Bitte Seite neu laden.</p>'; }
+  }
+})();
+
+const FLAGS = {
+  de: `<svg class="flag" width="28" height="18" viewBox="0 0 28 18">
+    <rect width="28" height="6" y="0" fill="#000"/>
+    <rect width="28" height="6" y="6" fill="#DD0000"/>
+    <rect width="28" height="6" y="12" fill="#FFCE00"/>
+  </svg>`,
+  it: `<svg class="flag" width="28" height="18" viewBox="0 0 28 18">
+    <rect width="9.3" height="18" x="0"    fill="#009246"/>
+    <rect width="9.3" height="18" x="9.3"  fill="#fff"/>
+    <rect width="9.3" height="18" x="18.7" fill="#CE2B37"/>
+  </svg>`
+};
+
+const DIRS = {
+  'de-it': { srcCode:'de-DE', tgtCode:'it-IT', srcLabel:'Deutsch',  tgtLabel:'Italiano', srcFlag:'de', tgtFlag:'it' },
+  'it-de': { srcCode:'it-IT', tgtCode:'de-DE', srcLabel:'Italiano', tgtLabel:'Deutsch',  srcFlag:'it', tgtFlag:'de' },
+};
+
+// ── State ─────────────────────────────────────────────────────────────────────
+let direction  = 'de-it';
+let phase      = 'idle'; // idle | listening | translating | speaking | error
+let recognition = null;
+let finalTranscript = '';
+let lastTranslation = '';
+
+// ── UI helpers ────────────────────────────────────────────────────────────────
+function setPhase(p) {
+  phase = p;
+  const wrap   = document.getElementById('mic-wrap');
+  const btn    = document.getElementById('mic-btn');
+  const icon   = document.getElementById('mic-icon');
+  const spin   = document.getElementById('mic-spinner');
+  const status = document.getElementById('status');
+
+  wrap.className = 'mic-wrap ' + p;
+  status.className = 'status ' + p;
+  btn.disabled = (p === 'translating');
+  icon.style.display  = (p === 'translating') ? 'none' : '';
+  spin.style.display  = (p === 'translating') ? 'block' : 'none';
+
+  const icons = { idle:'🎙️', listening:'⏹', speaking:'🔊', error:'🎙️', translating:'' };
+  icon.textContent = icons[p] || '🎙️';
+
+  const labels = {
+    idle:        'Tippen zum Sprechen',
+    listening:   '● Aufnahme läuft — tippen zum Stoppen',
+    translating: 'Übersetze…',
+    speaking:    '▶ Spielt ab — tippen zum Stoppen',
+    error:       '',
+  };
+  status.textContent = labels[p] || '';
+}
+
+function showError(msg) {
+  setPhase('error');
+  const s = document.getElementById('status');
+  s.textContent = msg; s.className = 'status error';
+}
+
+function showText(srcTxt, tgtTxt) {
+  const cfg = DIRS[direction];
+  // source panel
+  const ps = document.getElementById('panel-src');
+  document.getElementById('src-header').innerHTML =
+    FLAGS[cfg.srcFlag] + '<span>' + cfg.srcLabel + '</span>';
+  document.getElementById('src-text').textContent = srcTxt;
+  ps.className = 'panel' + (srcTxt ? ' visible' : '');
+
+  // target panel
+  const pt = document.getElementById('panel-tgt');
+  document.getElementById('tgt-header').innerHTML =
+    FLAGS[cfg.tgtFlag] + '<span>' + cfg.tgtLabel + '</span>' +
+    (tgtTxt ? '<button class="replay-btn" onclick="replayTTS()">↺ Nochmal</button>' : '');
+  document.getElementById('tgt-text').textContent = tgtTxt;
+  pt.className = 'panel target-panel' + (tgtTxt ? ' visible' : '');
+
+  // reset button
+  document.getElementById('reset-btn').className =
+    'reset-btn' + (srcTxt || tgtTxt ? ' visible' : '');
+}
+
+function updateDirButtons() {
+  document.getElementById('btn-de-it').className = 'dir-btn' + (direction==='de-it' ? ' active' : '');
+  document.getElementById('btn-it-de').className = 'dir-btn' + (direction==='it-de' ? ' active' : '');
+}
+
+// ── Direction ─────────────────────────────────────────────────────────────────
+function setDir(d) {
+  if (phase !== 'idle') resetAll();
+  direction = d;
+  updateDirButtons();
+}
+function swapDir() { setDir(direction === 'de-it' ? 'it-de' : 'de-it'); }
+
+// ── Mic button ────────────────────────────────────────────────────────────────
+function handleMicClick() {
+  if (phase === 'idle' || phase === 'error') startListening();
+  else if (phase === 'listening')   stopListening();
+  else if (phase === 'speaking')    stopSpeaking();
+}
+
+// ── Speech Recognition ────────────────────────────────────────────────────────
+function startListening() {
+  finalTranscript = '';
+  showText('', '');
+
+  // Android Chrome fix
+  navigator.mediaDevices?.getUserMedia({ audio: true }).catch(() => {});
+
+  const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+  if (!SR) { showError('Spracherkennung nicht unterstützt (Chrome/Edge nötig)'); return; }
+
+  recognition = new SR();
+  recognition.lang = DIRS[direction].srcCode;
+  recognition.interimResults = true;
+  recognition.maxAlternatives = 1;
+  setPhase('listening');
+
+  recognition.onresult = (e) => {
+    let interim = '';
+    for (let i = e.resultIndex; i < e.results.length; i++) {
+      if (e.results[i].isFinal) finalTranscript += e.results[i][0].transcript;
+      else interim += e.results[i][0].transcript;
+    }
+    showText(finalTranscript || interim, '');
+  };
+
+  recognition.onerror = (e) => {
+    if (e.error === 'not-allowed') showError('Mikrofon-Zugriff verweigert. Bitte Erlaubnis erteilen.');
+    else showError('Fehler: ' + e.error);
+  };
+
+  recognition.onend = () => {
+    if (phase === 'listening') {
+      const text = finalTranscript.trim();
+      if (text) translateText(text);
+      else { setPhase('idle'); showText('', ''); }
+    }
+  };
+
+  recognition.start();
+}
+
+function stopListening() {
+  recognition?.stop();
+  // onend handles the rest
+}
+
+// ── Translation ───────────────────────────────────────────────────────────────
+async function translateText(text) {
+  setPhase('translating');
+  const src = direction === 'de-it' ? 'German'  : 'Italian';
+  const tgt = direction === 'de-it' ? 'Italian' : 'German';
+  const key = localStorage.getItem('bl_api_key') || CLAUDE_API_KEY;
+
+  try {
+    const res = await fetch('https://api.anthropic.com/v1/messages', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'x-api-key': key,
+        'anthropic-version': '2023-06-01',
+        'anthropic-dangerous-direct-browser-access': 'true',
+      },
+      body: JSON.stringify({
+        model: 'claude-sonnet-4-5',
+        max_tokens: 1000,
+        system: `You are a professional translator. Translate the given ${src} text to ${tgt}. Return ONLY the translation, no explanations.`,
+        messages: [{ role: 'user', content: text }],
+      }),
+    });
+    const data = await res.json();
+    if (data.error) { showError('API Fehler: ' + data.error.message); return; }
+    const result = data.content?.find(b => b.type === 'text')?.text || '';
+    lastTranslation = result;
+    showText(text, result);
+    speakText(result, DIRS[direction].tgtCode);
+  } catch (e) {
+    showError('Netzwerkfehler. Bitte erneut versuchen.');
+  }
+}
+
+// ── TTS ───────────────────────────────────────────────────────────────────────
+function speakText(text, langCode) {
+  if (!window.speechSynthesis) { setPhase('idle'); return; }
+  window.speechSynthesis.cancel();
+  setPhase('speaking');
+  const utt = new SpeechSynthesisUtterance(text);
+  utt.lang = langCode; utt.rate = 0.95;
+  utt.onend  = () => setPhase('idle');
+  utt.onerror = () => setPhase('idle');
+  window.speechSynthesis.speak(utt);
+}
+
+function stopSpeaking() { window.speechSynthesis?.cancel(); setPhase('idle'); }
+function replayTTS()    { if (lastTranslation) speakText(lastTranslation, DIRS[direction].tgtCode); }
+
+// ── Reset ─────────────────────────────────────────────────────────────────────
+function resetAll() {
+  window.speechSynthesis?.cancel();
+  recognition?.stop();
+  finalTranscript = ''; lastTranslation = '';
+  showText('', '');
+  setPhase('idle');
+}
+</script>
+</body>
+</html>
