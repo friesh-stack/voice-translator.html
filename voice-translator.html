@@ -37,23 +37,19 @@
   .mic-btn.busy { background:#8B7355; }
   .spinner { width:38px; height:38px; border:3px solid rgba(245,240,232,0.3); border-top-color:#F5F0E8; border-radius:50%; animation:spin 0.8s linear infinite; display:none; }
 
-  /* Meter */
-  .meter-wrap { display:none; align-items:center; gap:8px; width:100%; max-width:280px; margin-bottom:10px; }
+  .meter-wrap { display:none; align-items:center; gap:8px; width:100%; max-width:280px; margin-bottom:8px; }
   .meter-track { flex:1; height:14px; background:rgba(0,0,0,0.1); border-radius:7px; overflow:hidden; }
   .meter-fill { height:100%; width:0%; border-radius:7px; transition:width 0.05s; }
 
-  /* Status */
-  .status { font-size:15px; color:#8B7355; font-style:italic; min-height:22px; margin-bottom:8px; text-align:center; max-width:340px; }
+  .status { font-size:15px; color:#8B7355; font-style:italic; min-height:22px; margin-bottom:6px; text-align:center; max-width:340px; }
   .status.rec-de { font-size:18px; font-style:normal; font-weight:700; color:#C4622D; }
   .status.rec-it { font-size:18px; font-style:normal; font-weight:700; color:#2D5016; }
 
-  /* Interim text */
-  .interim { min-height:28px; font-size:14px; color:#8B7355; font-style:italic; text-align:center; max-width:400px; margin-bottom:14px; padding:0 8px; }
+  .rec-timer { font-size:28px; font-weight:700; color:#C4622D; min-height:36px; text-align:center; margin-bottom:10px; font-family:monospace; letter-spacing:2px; }
+  .rec-timer.it { color:#2D5016; }
 
-  /* Error */
   .err-box { display:none; width:100%; max-width:500px; margin-bottom:12px; padding:12px 16px; border-radius:10px; background:rgba(180,50,30,0.1); border:1px solid rgba(180,50,30,0.35); color:#7a1a0a; font-size:13px; line-height:1.6; text-align:center; }
 
-  /* Bubbles */
   .log { width:100%; max-width:560px; display:flex; flex-direction:column; gap:10px; margin-bottom:16px; }
   .bubble { max-width:88%; padding:11px 15px; border-radius:14px; font-size:15px; line-height:1.6; animation:fadeIn 0.3s ease-out; }
   .bubble.de { align-self:flex-start; background:rgba(196,98,45,0.1); border:1px solid rgba(196,98,45,0.25); border-bottom-left-radius:4px; }
@@ -73,7 +69,7 @@
 <body>
 
 <h1>Gesprächs&shy;übersetzer</h1>
-<p class="subtitle">Deutsch · Italiano — powered by Claude</p>
+<p class="subtitle">Deutsch · Italiano — powered by Claude + Whisper</p>
 
 <div class="key-bar">
   <div class="key-dot" id="key-dot"></div>
@@ -106,17 +102,20 @@
 </div>
 
 <div class="status" id="status">Deutsch sprechen — Mikrofon tippen</div>
-<div class="interim" id="interim"></div>
+<div class="rec-timer" id="rec-timer"></div>
 <div class="err-box" id="err-box"></div>
 <div class="log" id="log"></div>
 <button class="reset-btn" id="reset-btn" onclick="resetAll()">↺ Neu starten</button>
 
 <script>
+// ── Config ────────────────────────────────────────────────────────────────────
+const WORKER_URL = 'https://blue-lagune-proxy.friesh.workers.dev';
+
 // ── Key ───────────────────────────────────────────────────────────────────────
 function updateKeyUI() {
   const key = localStorage.getItem('bl_api_key') || '';
   document.getElementById('key-dot').className = 'key-dot ' + (key.length>10?'ok':'missing');
-  document.getElementById('key-label').textContent = key.length>10 ? 'API Key vorhanden (sk-…'+key.slice(-4)+')' : 'Kein API Key!';
+  document.getElementById('key-label').textContent = key.length>10 ? 'API Key (sk-…'+key.slice(-4)+')' : 'Kein API Key!';
 }
 function changeKey() {
   const k = prompt('Anthropic API Key:', localStorage.getItem('bl_api_key')||'');
@@ -126,11 +125,10 @@ function changeKey() {
 
 // ── State ─────────────────────────────────────────────────────────────────────
 let turn  = 'de';
-let phase = 'idle'; // idle | listening | translating | speaking
-let recognition = null;
-let finalText = '';
-let shouldRestart = false;
+let phase = 'idle'; // idle | recording | processing | speaking
+let mediaRecorder = null, audioChunks = [], audioStream = null;
 let meterCtx = null, meterStream = null;
+let timerInterval = null, recSeconds = 0;
 
 // ── UI ────────────────────────────────────────────────────────────────────────
 function setUI(p, t) {
@@ -139,176 +137,168 @@ function setUI(p, t) {
   const btn=document.getElementById('mic-btn'), icon=document.getElementById('mic-icon'),
         spin=document.getElementById('spinner'), status=document.getElementById('status'),
         wrap=document.getElementById('mic-wrap');
-  document.getElementById('side-de').className='mode-side'+(phase==='listening'&&turn==='de'?' active-de':'');
-  document.getElementById('side-it').className='mode-side'+(phase==='listening'&&turn==='it'?' active-it':'');
-  wrap.className='mic-wrap'+(phase==='listening'?' show-ring':'');
+  document.getElementById('side-de').className='mode-side'+(phase==='recording'&&turn==='de'?' active-de':'');
+  document.getElementById('side-it').className='mode-side'+(phase==='recording'&&turn==='it'?' active-it':'');
+  wrap.className='mic-wrap'+(phase==='recording'?' show-ring':'');
   document.getElementById('ring1').className='ring ring1'+(turn==='it'?' it':'');
   document.getElementById('ring2').className='ring ring2'+(turn==='it'?' it':'');
-  btn.className='mic-btn'+(phase==='listening'?(turn==='de'?' de-rec':' it-rec'):phase==='translating'?' busy':'');
-  btn.disabled=(phase==='translating');
-  icon.style.display=phase==='translating'?'none':'';
-  spin.style.display=phase==='translating'?'block':'none';
-  icon.textContent=phase==='listening'?'⏹':phase==='speaking'?'🔊':'🎙️';
-  status.className='status'+(phase==='listening'?(turn==='de'?' rec-de':' rec-it'):'');
-  if (phase==='idle')      status.textContent=turn==='de'?'Deutsch sprechen — Mikrofon tippen':'Nächste deutsche Frage — Mikrofon tippen';
-  else if (phase==='listening'&&turn==='de') status.textContent='⏹ Sprechen, dann nochmal tippen!';
-  else if (phase==='listening'&&turn==='it') status.textContent='⏹ Parlare, poi toccare!';
-  else if (phase==='translating') status.textContent='Claude übersetzt…';
-  else if (phase==='speaking')    status.textContent='🔊 Wiedergabe…';
+  btn.className='mic-btn'+(phase==='recording'?(turn==='de'?' de-rec':' it-rec'):phase==='processing'?' busy':'');
+  btn.disabled=(phase==='processing');
+  icon.style.display=phase==='processing'?'none':'';
+  spin.style.display=phase==='processing'?'block':'none';
+  icon.textContent=phase==='recording'?'⏹':phase==='speaking'?'🔊':'🎙️';
+  status.className='status'+(phase==='recording'?(turn==='de'?' rec-de':' rec-it'):'');
+  if (phase==='idle')              status.textContent=turn==='de'?'Deutsch sprechen — Mikrofon tippen':'Nächste Frage — Mikrofon tippen';
+  else if (phase==='recording'&&turn==='de') status.textContent='⏹ Sprechen, dann nochmal tippen!';
+  else if (phase==='recording'&&turn==='it') status.textContent='⏹ Parlare, poi toccare!';
+  else if (phase==='processing')   status.textContent='Whisper transkribiert + Claude übersetzt…';
+  else if (phase==='speaking')     status.textContent='🔊 Wiedergabe…';
+  // Timer
+  if (phase==='recording') startTimer();
+  else stopTimer();
 }
 
 function showErr(msg) {
   const b=document.getElementById('err-box'); b.innerHTML=msg; b.style.display='block';
-  setTimeout(()=>b.style.display='none', 9000);
+  setTimeout(()=>b.style.display='none', 10000);
 }
-function setInterim(txt) { document.getElementById('interim').textContent=txt; }
+
+function startTimer() {
+  recSeconds=0; clearInterval(timerInterval);
+  const el=document.getElementById('rec-timer');
+  el.className='rec-timer'+(turn==='it'?' it':'');
+  timerInterval=setInterval(()=>{ recSeconds++; el.textContent='⏱ '+recSeconds+'s'; },1000);
+}
+function stopTimer() { clearInterval(timerInterval); document.getElementById('rec-timer').textContent=''; }
 
 // ── Mic click ─────────────────────────────────────────────────────────────────
 function handleMicClick() {
-  if (phase==='translating') return;
-  if (phase==='speaking')   { stopSpeaking(); return; }
-  if (phase==='listening')  { shouldRestart=false; recognition?.stop(); return; }
-  startListening(turn);
+  if (phase==='processing') return;
+  if (phase==='speaking')  { stopSpeaking(); return; }
+  if (phase==='recording') { stopRecording(); return; }
+  startRecording(turn);
 }
 
-// ── Speech Recognition ────────────────────────────────────────────────────────
-function startListening(lang) {
-  finalText=''; shouldRestart=true;
-  setInterim('');
-  navigator.mediaDevices?.getUserMedia({audio:true}).catch(()=>{});
-
-  const SR=window.SpeechRecognition||window.webkitSpeechRecognition;
-  if (!SR) { showErr('❌ SpeechRecognition nicht unterstützt. Chrome oder Samsung Browser verwenden.'); return; }
-
-  startMeter();
-  createRecognition(lang);
-}
-
-function createRecognition(lang) {
-  if (recognition) { try{recognition.abort();}catch(e){} }
-  const SR=window.SpeechRecognition||window.webkitSpeechRecognition;
-  recognition=new SR();
-  recognition.lang=lang==='de'?'de-DE':'it-IT';
-  recognition.interimResults=true;
-  recognition.continuous=false; // false = more reliable on Android
-  recognition.maxAlternatives=1;
-  setUI('listening', lang);
-
-  recognition.onresult=(e)=>{
-    finalText=''; let interim='';
-    for (let i=0;i<e.results.length;i++) {
-      if (e.results[i].isFinal) finalText+=e.results[i][0].transcript+' ';
-      else interim+=e.results[i][0].transcript;
-    }
-    setInterim((finalText||interim).trim().slice(0,80));
-  };
-
-  recognition.onerror=(e)=>{
-    if (e.error==='no-speech' || e.error==='aborted') return; // handled in onend
-    if (e.error==='not-allowed') { showErr('🚫 Mikrofon-Zugriff verweigert — in Browser-Einstellungen erlauben.'); shouldRestart=false; setUI('idle'); stopMeter(); return; }
-    if (e.error==='network') { showErr('🌐 Netzwerkfehler bei Google Speech — bitte nochmal versuchen.'); }
-    console.warn('SR error:', e.error);
-  };
-
-  recognition.onend=()=>{
-    if (phase!=='listening') return;
-    const text=finalText.trim();
-    if (text) {
-      shouldRestart=false; stopMeter();
-      setInterim('');
-      translateText(text, lang);
-    } else if (shouldRestart) {
-      // Auto-restart — keep listening
-      setTimeout(()=>{ if(phase==='listening'&&shouldRestart) createRecognition(lang); }, 150);
-    } else {
-      stopMeter(); setUI('idle'); setInterim('');
-    }
-  };
-
-  try { recognition.start(); } catch(e) { showErr('Fehler beim Start: '+e.message); setUI('idle'); }
-}
-
-// ── Level Meter ───────────────────────────────────────────────────────────────
-async function startMeter() {
+// ── MediaRecorder ─────────────────────────────────────────────────────────────
+async function startRecording(lang) {
   try {
-    meterStream=await navigator.mediaDevices.getUserMedia({audio:true});
-    meterCtx=new AudioContext();
-    const src=meterCtx.createMediaStreamSource(meterStream);
-    const analyser=meterCtx.createAnalyser(); analyser.fftSize=256;
+    audioStream = await navigator.mediaDevices.getUserMedia({ audio: true });
+  } catch(e) { showErr('🚫 Mikrofon: ' + e.message); return; }
+
+  // Meter
+  try {
+    meterStream = await navigator.mediaDevices.getUserMedia({ audio: true });
+    meterCtx = new AudioContext();
+    const src = meterCtx.createMediaStreamSource(meterStream);
+    const analyser = meterCtx.createAnalyser(); analyser.fftSize=256;
     src.connect(analyser);
-    const buf=new Uint8Array(analyser.frequencyBinCount);
-    const fill=document.getElementById('meter-fill');
+    const buf = new Uint8Array(analyser.frequencyBinCount);
+    const fill = document.getElementById('meter-fill');
     document.getElementById('meter-wrap').style.display='flex';
     function draw() {
-      if (phase!=='listening'){document.getElementById('meter-wrap').style.display='none';return;}
+      if (phase!=='recording'){document.getElementById('meter-wrap').style.display='none';return;}
       analyser.getByteFrequencyData(buf);
-      const avg=buf.reduce((a,b)=>a+b,0)/buf.length;
-      const pct=Math.min(100,avg*3);
-      fill.style.width=pct+'%';
-      fill.style.background=pct>12?'#2D5016':'#C4622D';
+      const avg=buf.reduce((a,b)=>a+b,0)/buf.length, pct=Math.min(100,avg*3);
+      fill.style.width=pct+'%'; fill.style.background=pct>12?'#2D5016':'#C4622D';
       requestAnimationFrame(draw);
     }
     draw();
   } catch(e) {}
-}
-function stopMeter() {
-  meterStream?.getTracks().forEach(t=>t.stop());
-  meterCtx?.close().catch(()=>{});
-  meterStream=null; meterCtx=null;
-  document.getElementById('meter-wrap').style.display='none';
+
+  // Pick best format
+  const fmt = ['audio/webm;codecs=opus','audio/webm','audio/ogg;codecs=opus','audio/mp4','audio/wav']
+    .find(f=>MediaRecorder.isTypeSupported(f)) || '';
+  audioChunks = [];
+  mediaRecorder = new MediaRecorder(audioStream, fmt?{mimeType:fmt}:{});
+  mediaRecorder.ondataavailable = e => { if(e.data.size>0) audioChunks.push(e.data); };
+  mediaRecorder.onstop = () => processAudio(lang);
+  mediaRecorder.start(100);
+  setUI('recording', lang);
 }
 
-// ── Translate ─────────────────────────────────────────────────────────────────
-async function translateText(text, lang) {
-  setUI('translating');
-  const src=lang==='de'?'German':'Italian', tgt=lang==='de'?'Italian':'German';
-  const key=localStorage.getItem('bl_api_key')||'';
+function stopRecording() {
+  if (mediaRecorder?.state !== 'inactive') mediaRecorder.stop();
+  audioStream?.getTracks().forEach(t=>t.stop());
+  meterStream?.getTracks().forEach(t=>t.stop());
+  meterCtx?.close().catch(()=>{});
+  setUI('processing');
+}
+
+// ── Whisper + Claude ──────────────────────────────────────────────────────────
+async function processAudio(lang) {
+  const blob = new Blob(audioChunks, { type: mediaRecorder.mimeType || 'audio/webm' });
+  if (blob.size < 500) { showErr('🔇 Aufnahme zu kurz — mindestens 1 Sekunde sprechen.'); setUI('idle'); return; }
+
+  const key = localStorage.getItem('bl_api_key') || '';
+  const srcLang = lang==='de'?'German':'Italian';
+  const tgtLang = lang==='de'?'Italian':'German';
+
   try {
-    const res=await fetch('https://api.anthropic.com/v1/messages',{
-      method:'POST',
-      headers:{'Content-Type':'application/json','x-api-key':key,'anthropic-version':'2023-06-01','anthropic-dangerous-direct-browser-access':'true'},
-      body:JSON.stringify({
-        model:'claude-sonnet-4-5', max_tokens:1000,
-        system:`You are a professional translator. Translate ${src} to ${tgt}. Return ONLY the translation.`,
-        messages:[{role:'user',content:text}]
+    // Step 1: Whisper Transkription via Worker
+    const formData = new FormData();
+    formData.append('audio', blob, 'audio.webm');
+    formData.append('lang', lang);
+
+    const transcribeRes = await fetch(WORKER_URL + '/transcribe', {
+      method: 'POST',
+      body: formData,
+    });
+    const transcribeData = await transcribeRes.json();
+    if (transcribeData.error) { showErr('Whisper Fehler: ' + transcribeData.error); setUI('idle'); return; }
+    const transcript = (transcribeData.text || '').trim();
+    if (!transcript) { showErr('🔇 Keine Sprache erkannt — bitte deutlicher sprechen.'); setUI('idle'); return; }
+
+    // Step 2: Claude Übersetzung
+    const transRes = await fetch('https://api.anthropic.com/v1/messages', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'x-api-key': key,
+        'anthropic-version': '2023-06-01',
+        'anthropic-dangerous-direct-browser-access': 'true',
+      },
+      body: JSON.stringify({
+        model: 'claude-sonnet-4-5', max_tokens: 1000,
+        system: `You are a professional translator. Translate ${srcLang} to ${tgtLang}. Return ONLY the translation.`,
+        messages: [{ role:'user', content: transcript }]
       })
     });
-    const data=await res.json();
-    if (data.error){showErr('API Fehler: '+data.error.message);setUI('idle');return;}
-    const result=(data.content?.find(b=>b.type==='text')?.text||'').trim();
-    addBubbles(lang, text, result);
-    speakText(result, lang==='de'?'it-IT':'de-DE', lang);
-  } catch(e) { showErr('Netzwerkfehler: '+e.message); setUI('idle'); }
+    const transData = await transRes.json();
+    if (transData.error) { showErr('Claude Fehler: ' + transData.error.message); setUI('idle'); return; }
+    const translation = (transData.content?.find(b=>b.type==='text')?.text || '').trim();
+
+    addBubbles(lang, transcript, translation);
+    speakText(translation, lang==='de'?'it-IT':'de-DE', lang);
+
+  } catch(e) { showErr('Fehler: ' + e.message); setUI('idle'); }
 }
 
 // ── TTS ───────────────────────────────────────────────────────────────────────
 function speakText(text, langCode, fromLang) {
-  if (!window.speechSynthesis){afterSpeaking(fromLang);return;}
+  if (!window.speechSynthesis) { afterSpeaking(fromLang); return; }
   window.speechSynthesis.cancel();
   setUI('speaking', fromLang);
-  const utt=new SpeechSynthesisUtterance(text);
+  const utt = new SpeechSynthesisUtterance(text);
   utt.lang=langCode; utt.rate=0.92;
   utt.onend=utt.onerror=()=>afterSpeaking(fromLang);
   window.speechSynthesis.speak(utt);
 }
-function stopSpeaking(){window.speechSynthesis?.cancel();setUI('idle','de');}
-function afterSpeaking(fromLang){
-  if (fromLang==='de') { setUI('idle','it'); setTimeout(()=>startListening('it'),700); }
+function stopSpeaking() { window.speechSynthesis?.cancel(); setUI('idle','de'); }
+function afterSpeaking(fromLang) {
+  if (fromLang==='de') { setUI('idle','it'); setTimeout(()=>startRecording('it'), 700); }
   else setUI('idle','de');
 }
 
 // ── Bubbles ───────────────────────────────────────────────────────────────────
-const FLAG={
+const FLAG = {
   de:'<svg width="16" height="11" viewBox="0 0 16 11" style="border-radius:1px"><rect width="16" height="3.7" y="0" fill="#000"/><rect width="16" height="3.7" y="3.7" fill="#DD0000"/><rect width="16" height="3.7" y="7.3" fill="#FFCE00"/></svg>',
   it:'<svg width="16" height="11" viewBox="0 0 16 11" style="border-radius:1px"><rect width="5.3" height="11" x="0" fill="#009246"/><rect width="5.3" height="11" x="5.3" fill="#fff"/><rect width="5.3" height="11" x="10.7" fill="#CE2B37"/></svg>'
 };
 function addBubbles(lang, orig, trans) {
   const tgt=lang==='de'?'it':'de', log=document.getElementById('log');
-  [['bubble '+lang, FLAG[lang]+(lang==='de'?' Deutsch':' Italiano'), orig],
-   ['bubble '+tgt,  FLAG[tgt] +(tgt==='de'?' Deutsch':' Italiano'), trans]]
-  .forEach(([cls,label,txt])=>{
-    const d=document.createElement('div'); d.className=cls;
-    d.innerHTML=`<div class="bubble-label">${label}</div><div>${txt}</div>`;
+  [[lang, orig],[tgt, trans]].forEach(([l,txt])=>{
+    const d=document.createElement('div'); d.className='bubble '+l;
+    d.innerHTML=`<div class="bubble-label">${FLAG[l]} ${l==='de'?'Deutsch':'Italiano'}</div><div>${txt}</div>`;
     log.appendChild(d);
   });
   log.lastChild.scrollIntoView({behavior:'smooth',block:'nearest'});
@@ -316,16 +306,17 @@ function addBubbles(lang, orig, trans) {
 }
 
 // ── Reset ─────────────────────────────────────────────────────────────────────
-function resetAll(){
-  shouldRestart=false;
+function resetAll() {
   window.speechSynthesis?.cancel();
-  try{recognition?.abort();}catch(e){}
-  stopMeter();
-  finalText='';
+  if (mediaRecorder?.state!=='inactive') mediaRecorder?.stop();
+  audioStream?.getTracks().forEach(t=>t.stop());
+  meterStream?.getTracks().forEach(t=>t.stop());
+  meterCtx?.close().catch(()=>{});
+  stopTimer(); audioChunks=[];
   document.getElementById('log').innerHTML='';
   document.getElementById('reset-btn').className='reset-btn';
   document.getElementById('err-box').style.display='none';
-  setInterim('');
+  document.getElementById('meter-wrap').style.display='none';
   setUI('idle','de');
 }
 </script>
