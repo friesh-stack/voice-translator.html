@@ -234,9 +234,12 @@ async function processAudio(lang) {
   const tgtLang = lang==='de'?'Italian':'German';
 
   try {
+    // Convert to WAV for Whisper compatibility
+    const wavBlob = await convertToWav(blob);
+
     // Step 1: Whisper Transkription via Worker
     const formData = new FormData();
-    formData.append('audio', blob, 'audio.webm');
+    formData.append('audio', wavBlob, 'audio.wav');
     formData.append('lang', lang);
 
     const transcribeRes = await fetch(WORKER_URL + '/transcribe', {
@@ -259,7 +262,7 @@ async function processAudio(lang) {
       },
       body: JSON.stringify({
         model: 'claude-sonnet-4-5', max_tokens: 1000,
-        system: `You are a professional translator. Translate ${srcLang} to ${tgtLang}. Return ONLY the translation.`,
+        system: `You are a professional translator. The input is in ${srcLang}. Translate to ${tgtLang}. Return ONLY the translation, nothing else.`,
         messages: [{ role:'user', content: transcript }]
       })
     });
@@ -271,6 +274,45 @@ async function processAudio(lang) {
     setUI('idle');
 
   } catch(e) { showErr('Fehler: ' + e.message); setUI('idle'); }
+}
+
+// Convert any audio blob to WAV via Web Audio API
+async function convertToWav(blob) {
+  try {
+    const arrayBuffer = await blob.arrayBuffer();
+    const audioCtx = new AudioContext({ sampleRate: 16000 });
+    const decoded = await audioCtx.decodeAudioData(arrayBuffer);
+    audioCtx.close();
+
+    // Mono, 16kHz, 16-bit PCM WAV
+    const samples = decoded.getChannelData(0);
+    const pcm = new Int16Array(samples.length);
+    for (let i = 0; i < samples.length; i++) {
+      pcm[i] = Math.max(-32768, Math.min(32767, samples[i] * 32768));
+    }
+
+    const wavBuffer = new ArrayBuffer(44 + pcm.byteLength);
+    const view = new DataView(wavBuffer);
+    const sr = 16000;
+    function w(off, val, len) {
+      if (len===4) view.setUint32(off, val, true);
+      else if (len===2) view.setUint16(off, val, true);
+    }
+    // WAV header
+    [82,73,70,70].forEach((b,i)=>view.setUint8(i,b));   // RIFF
+    w(4, 36 + pcm.byteLength, 4);
+    [87,65,86,69].forEach((b,i)=>view.setUint8(8+i,b));  // WAVE
+    [102,109,116,32].forEach((b,i)=>view.setUint8(12+i,b)); // fmt
+    w(16,16,4); w(20,1,2); w(22,1,2); w(24,sr,4); w(28,sr*2,4); w(32,2,2); w(34,16,2);
+    [100,97,116,97].forEach((b,i)=>view.setUint8(36+i,b)); // data
+    w(40, pcm.byteLength, 4);
+    new Int16Array(wavBuffer, 44).set(pcm);
+
+    return new Blob([wavBuffer], { type: 'audio/wav' });
+  } catch(e) {
+    // Fallback: return original blob
+    return blob;
+  }
 }
 
 // ── TTS ───────────────────────────────────────────────────────────────────────
