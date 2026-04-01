@@ -266,10 +266,10 @@ async function processAudio(lang) {
   const src=lang==='de'?'German':'Italian', tgt=lang==='de'?'Italian':'German';
   try {
     const wav=await convertToWav(blob);
-    const bytes=new Uint8Array(await wav.arrayBuffer());
-    let bin=''; bytes.forEach(b=>bin+=String.fromCharCode(b));
-    const b64=btoa(bin);
-    const tres=await fetch(WORKER_URL+'/transcribe',{method:'POST',body:JSON.stringify({audio:b64,lang}),headers:{'Content-Type':'application/json'}});
+    const fd=new FormData();
+    fd.append('audio', wav, 'audio.wav');
+    fd.append('lang', lang);
+    const tres=await fetch(WORKER_URL+'/transcribe',{method:'POST',body:fd});
     const td=await tres.json();
     if(td.error){showErr('Whisper: '+td.error);setUI('idle');return;}
     const transcript=(td.text||'').trim();
@@ -278,13 +278,20 @@ async function processAudio(lang) {
       method:'POST',
       headers:{'Content-Type':'application/json','x-api-key':key,'anthropic-version':'2023-06-01','anthropic-dangerous-direct-browser-access':'true'},
       body:JSON.stringify({model:'claude-sonnet-4-5',max_tokens:1000,
-        system:`Translate ${src} to ${tgt}. Return ONLY the translation.`,
+        system:`The user spoke in ${src}. The speech recognition may have made errors or detected the wrong language. First correct the transcription to proper ${src}, then translate to ${tgt}. Respond ONLY with JSON: {"corrected":"...","translation":"..."}`,
         messages:[{role:'user',content:transcript}]})
     });
     const cd=await cres.json();
     if(cd.error){showErr('Claude: '+cd.error.message);setUI('idle');return;}
-    const translation=(cd.content?.find(b=>b.type==='text')?.text||'').trim();
-    addBubbles(lang,transcript,translation);
+    const raw=(cd.content?.find(b=>b.type==='text')?.text||'').trim();
+    let corrected=transcript, translation='';
+    try {
+      const parsed=JSON.parse(raw.replace(/```json|```/g,'').trim());
+      corrected=parsed.corrected||transcript;
+      translation=parsed.translation||'';
+    } catch(e) { translation=raw; }
+    if(!translation){showErr('Keine Übersetzung.');setUI('idle');return;}
+    addBubbles(lang,corrected,translation);
     setUI('idle');
     trySpeak(translation,lang==='de'?'it-IT':'de-DE',lang);
   } catch(e){showErr('Fehler: '+e.message);setUI('idle');}
