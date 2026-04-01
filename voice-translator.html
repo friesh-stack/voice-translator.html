@@ -182,7 +182,15 @@ function handleMicClick() {
 // ── MediaRecorder ─────────────────────────────────────────────────────────────
 async function startRecording(lang) {
   try {
-    audioStream = await navigator.mediaDevices.getUserMedia({ audio: true });
+    audioStream = await navigator.mediaDevices.getUserMedia({
+      audio: {
+        channelCount: 1,
+        sampleRate: 16000,
+        echoCancellation: true,
+        noiseSuppression: true,
+        autoGainControl: true,
+      }
+    });
   } catch(e) { showErr('🚫 Mikrofon: ' + e.message); return; }
 
   // Meter
@@ -227,7 +235,7 @@ function stopRecording() {
 // ── Whisper + Claude ──────────────────────────────────────────────────────────
 async function processAudio(lang) {
   const blob = new Blob(audioChunks, { type: mediaRecorder.mimeType || 'audio/webm' });
-  if (blob.size < 500) { showErr('🔇 Aufnahme zu kurz — mindestens 1 Sekunde sprechen.'); setUI('idle'); return; }
+  if (blob.size < 8000) { showErr('🔇 Aufnahme zu kurz — bitte 2-3 Sekunden sprechen.'); setUI('idle'); return; }
 
   const key = localStorage.getItem('bl_api_key') || '';
   const srcLang = lang==='de'?'German':'Italian';
