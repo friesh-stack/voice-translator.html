@@ -268,21 +268,12 @@ async function processAudio(lang) {
     const translation = (transData.content?.find(b=>b.type==='text')?.text || '').trim();
 
     addBubbles(lang, transcript, translation);
-    speakText(translation, lang==='de'?'it-IT':'de-DE', lang);
+    setUI('idle');
 
   } catch(e) { showErr('Fehler: ' + e.message); setUI('idle'); }
 }
 
 // ── TTS ───────────────────────────────────────────────────────────────────────
-function speakText(text, langCode, fromLang) {
-  if (!window.speechSynthesis) { afterSpeaking(fromLang); return; }
-  window.speechSynthesis.cancel();
-  setUI('speaking', fromLang);
-  const utt = new SpeechSynthesisUtterance(text);
-  utt.lang=langCode; utt.rate=0.92;
-  utt.onend=utt.onerror=()=>afterSpeaking(fromLang);
-  window.speechSynthesis.speak(utt);
-}
 function stopSpeaking() { window.speechSynthesis?.cancel(); setUI('idle','de'); }
 function afterSpeaking(fromLang) {
   if (fromLang==='de') { setUI('idle','it'); setTimeout(()=>startRecording('it'), 700); }
@@ -296,13 +287,53 @@ const FLAG = {
 };
 function addBubbles(lang, orig, trans) {
   const tgt=lang==='de'?'it':'de', log=document.getElementById('log');
-  [[lang, orig],[tgt, trans]].forEach(([l,txt])=>{
-    const d=document.createElement('div'); d.className='bubble '+l;
-    d.innerHTML=`<div class="bubble-label">${FLAG[l]} ${l==='de'?'Deutsch':'Italiano'}</div><div>${txt}</div>`;
-    log.appendChild(d);
-  });
+  const tgtCode = lang==='de'?'it-IT':'de-DE';
+
+  // Original bubble
+  const d1=document.createElement('div'); d1.className='bubble '+lang;
+  d1.innerHTML=`<div class="bubble-label">${FLAG[lang]} ${lang==='de'?'Deutsch':'Italiano'}</div><div>${orig}</div>`;
+  log.appendChild(d1);
+
+  // Translation bubble with play button
+  const d2=document.createElement('div'); d2.className='bubble '+tgt;
+  const btnId='play-'+Date.now();
+  d2.innerHTML=`<div class="bubble-label">${FLAG[tgt]} ${tgt==='de'?'Deutsch':'Italiano'}
+    <button id="${btnId}" onclick="playTTS(this,'${tgtCode}')" style="margin-left:auto;background:#1A1208;color:#F5F0E8;border:none;border-radius:6px;padding:3px 10px;font-size:13px;cursor:pointer;">▶ Anhören</button>
+  </div><div>${trans}</div>`;
+  log.appendChild(d2);
+
+  // Store text on button for TTS
+  document.getElementById(btnId)._text = trans;
+
   log.lastChild.scrollIntoView({behavior:'smooth',block:'nearest'});
   document.getElementById('reset-btn').className='reset-btn show';
+
+  // Try auto-TTS (works on desktop; on Android needs user tap)
+  tryAutoSpeak(trans, tgtCode, lang);
+}
+
+function playTTS(btn, langCode) {
+  const text = btn._text || btn.closest('.bubble').querySelector('div:last-child').textContent;
+  window.speechSynthesis?.cancel();
+  const utt = new SpeechSynthesisUtterance(text);
+  utt.lang = langCode; utt.rate = 0.92;
+  window.speechSynthesis.speak(utt);
+}
+
+function tryAutoSpeak(text, langCode, fromLang) {
+  if (!window.speechSynthesis) { afterSpeaking(fromLang); return; }
+  window.speechSynthesis.cancel();
+  setUI('speaking', fromLang);
+  const utt = new SpeechSynthesisUtterance(text);
+  utt.lang = langCode; utt.rate = 0.92;
+  utt.onend  = () => afterSpeaking(fromLang);
+  utt.onerror = () => { setUI('idle'); }; // On Android: silent fail, user uses ▶ button
+  window.speechSynthesis.speak(utt);
+  // Android workaround: check after 1s if speech started
+  setTimeout(() => {
+    if (window.speechSynthesis.speaking) return; // OK
+    setUI('idle'); // Not speaking → let user use ▶ button
+  }, 1000);
 }
 
 // ── Reset ─────────────────────────────────────────────────────────────────────
