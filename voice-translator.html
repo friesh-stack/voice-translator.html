@@ -51,6 +51,14 @@
   .reset-btn { margin-top: 8px; background: transparent; border: 1px solid #C8B89A; border-radius: 8px; padding: 9px 22px; color: #8B7355; cursor: pointer; font-size: 14px; font-family: inherit; letter-spacing: 0.04em; display: none; }
   .reset-btn.show { display: block; }
 
+  .key-bar { display: flex; align-items: center; gap: 10px; margin-bottom: 18px; padding: 9px 16px; border-radius: 10px; border: 1px solid #C8B89A; background: rgba(255,255,255,0.4); font-size: 13px; font-family: inherit; }
+  .key-dot { width: 10px; height: 10px; border-radius: 50%; flex-shrink: 0; }
+  .key-dot.ok  { background: #2D5016; box-shadow: 0 0 6px rgba(45,80,22,0.6); }
+  .key-dot.missing { background: #b44; box-shadow: 0 0 6px rgba(180,68,68,0.6); animation: blink 1s infinite; }
+  .key-label { color: #5a4228; flex: 1; }
+  .key-btn { background: #1A1208; color: #F5F0E8; border: none; border-radius: 7px; padding: 5px 13px; font-size: 12px; cursor: pointer; font-family: inherit; white-space: nowrap; }
+  .key-btn:hover { background: #C4622D; }
+
   @keyframes ringPulse { 0%{transform:scale(0.85);opacity:0.8} 100%{transform:scale(1.4);opacity:0} }
   @keyframes spin      { from{transform:rotate(0deg)} to{transform:rotate(360deg)} }
   @keyframes fadeIn    { from{opacity:0;transform:translateY(6px)} to{opacity:1;transform:none} }
@@ -62,6 +70,12 @@
 
 <h1>Gesprächs&shy;übersetzer</h1>
 <p class="subtitle">Deutsch · Italiano</p>
+
+<div class="key-bar" id="key-bar">
+  <div class="key-dot" id="key-dot"></div>
+  <span class="key-label" id="key-label">API Key wird geprüft…</span>
+  <button class="key-btn" onclick="changeKey()">🔑 Key ändern</button>
+</div>
 
 <div class="mode-bar">
   <div class="mode-side" id="side-de">
@@ -97,10 +111,37 @@
 <button class="reset-btn" id="reset-btn" onclick="resetAll()">↺ Gespräch neu starten</button>
 
 <script>
-if (!localStorage.getItem('bl_api_key')) {
-  const k = prompt('Anthropic API Key:');
-  if (k) localStorage.setItem('bl_api_key', k.trim());
+function updateKeyUI() {
+  const key = localStorage.getItem('bl_api_key') || '';
+  const dot   = document.getElementById('key-dot');
+  const label = document.getElementById('key-label');
+  if (key && key.length > 10) {
+    dot.className = 'key-dot ok';
+    label.textContent = 'API Key vorhanden (sk-…' + key.slice(-4) + ')';
+  } else {
+    dot.className = 'key-dot missing';
+    label.textContent = 'Kein API Key — bitte eingeben!';
+  }
 }
+
+function changeKey() {
+  const current = localStorage.getItem('bl_api_key') || '';
+  const k = prompt('Anthropic API Key eingeben:', current);
+  if (k && k.trim()) {
+    localStorage.setItem('bl_api_key', k.trim());
+    updateKeyUI();
+  }
+}
+
+// Init: check key, ask if missing
+(function() {
+  const key = localStorage.getItem('bl_api_key') || '';
+  if (!key || key.length < 10) {
+    const k = prompt('Anthropic API Key eingeben:');
+    if (k && k.trim()) localStorage.setItem('bl_api_key', k.trim());
+  }
+  updateKeyUI();
+})();
 
 let turn  = 'de';   // 'de' = waiting for German, 'it' = listening/waiting for Italian
 let phase = 'idle'; // idle | listening | translating | speaking
