@@ -76,6 +76,9 @@
   <span class="key-label" id="key-label">API Key wird geprüft…</span>
   <button class="key-btn" onclick="changeKey()">🔑 Key ändern</button>
 </div>
+<div style="margin-bottom:20px;">
+  <button onclick="testMic()" style="background:transparent;border:1px solid #C8B89A;border-radius:8px;padding:7px 18px;color:#8B7355;cursor:pointer;font-size:13px;font-family:inherit;">🎙️ Mikrofon testen</button>
+</div>
 
 <div class="mode-bar">
   <div class="mode-side" id="side-de">
@@ -111,6 +114,31 @@
 <button class="reset-btn" id="reset-btn" onclick="resetAll()">↺ Gespräch neu starten</button>
 
 <script>
+function showScreenError(msg) {
+  let box = document.getElementById('err-box');
+  if (!box) {
+    box = document.createElement('div');
+    box.id = 'err-box';
+    box.style.cssText = 'width:100%;max-width:500px;margin-bottom:16px;padding:14px 18px;border-radius:12px;background:rgba(180,50,30,0.12);border:1px solid rgba(180,50,30,0.4);color:#7a1a0a;font-size:14px;font-family:inherit;line-height:1.5;text-align:center;';
+    document.getElementById('log').before(box);
+  }
+  box.innerHTML = msg + '<br><small style="opacity:0.7">Browser: ' + navigator.userAgent.match(/(Chrome|Opera|Edge|Firefox)\/[\d.]+/)?.[0] + '</small>';
+  box.style.display = 'block';
+  setTimeout(() => { if(box) box.style.display = 'none'; }, 8000);
+}
+
+function testMic() {
+  navigator.mediaDevices.getUserMedia({ audio: true })
+    .then(stream => {
+      stream.getTracks().forEach(t => t.stop());
+      showScreenError('✅ Mikrofon funktioniert! Jetzt den 🎙️ Button tippen.');
+      document.getElementById('err-box').style.background = 'rgba(45,80,22,0.1)';
+      document.getElementById('err-box').style.borderColor = 'rgba(45,80,22,0.3)';
+      document.getElementById('err-box').style.color = '#1A3A0A';
+    })
+    .catch(e => showScreenError('🚫 Mikrofon-Fehler: ' + e.message + ' — Bitte Erlaubnis in Browser-Einstellungen erteilen.'));
+}
+
 function updateKeyUI() {
   const key = localStorage.getItem('bl_api_key') || '';
   const dot   = document.getElementById('key-dot');
@@ -234,8 +262,14 @@ function startListening(lang) {
   };
 
   recognition.onerror = (e) => {
-    if (e.error === 'not-allowed') alert('Mikrofon-Zugriff verweigert. Bitte Erlaubnis erteilen.');
-    else console.warn('SR error:', e.error);
+    const msgs = {
+      'not-allowed':  '🚫 Mikrofon-Zugriff verweigert. Bitte in den Browser-Einstellungen erlauben.',
+      'no-speech':    '🔇 Keine Sprache erkannt. Bitte nochmal versuchen.',
+      'network':      '🌐 Netzwerkfehler bei Spracherkennung.',
+      'audio-capture':'🎙️ Kein Mikrofon gefunden.',
+      'aborted':      '⏹ Aufnahme abgebrochen.',
+    };
+    showScreenError(msgs[e.error] || '❌ Mikrofon-Fehler: ' + e.error);
     setUI('idle');
   };
 
